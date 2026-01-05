@@ -1,0 +1,73 @@
+using Random
+using StaticArrays
+using Molly
+using Molly: PairwiseInteraction, simulate!, Verlet, random_velocity
+using Molly: visualize
+using Unitful
+using LinearAlgebra: norm
+
+
+# Custom pairwise interaction with cutoff
+struct EmulsionInter{T} <: PairwiseInteraction
+    cutoff::T
+end
+
+Molly.use_neighbors(::EmulsionInter) = true
+
+const ε = Dict(
+    (1,1) => 1.0,   # water-water
+    (2,2) => 1.0,   # oil-oil
+    (1,2) => 0.2,   # water-oil (weak attraction)
+    (2,1) => 0.2,
+)
+
+const σ = Dict(
+    (1,1) => 1.0,
+    (2,2) => 1.0,
+    (1,2) => 1.0,
+    (2,1) => 1.0,
+)
+
+# Vector force along minimum-image displacement (x periodic only)
+function Molly.force(inter::EmulsionInter,
+                     vec_ij,
+                     atom_i::Molly.Atom,
+                     atom_j::Molly.Atom,
+                     force_units,
+                     special,
+                     coord_i,
+                     coord_j,
+                     boundary::Molly.RectangularBoundary,
+                     velocity_i,
+                     velocity_j,
+                     step_n)
+
+    # vec_ij is displacement; enforce x-periodic, y direct
+    Δx = wrap_x(vec_ij[1], boundary.side_lengths[1])  # periodic in x
+    Δy = wrap_x(vec_ij[2], boundary.side_lengths[2])  # periodic in y
+    disp = SVector(Δx, Δy)
+    r = norm(disp)
+      if r == 0 || r > inter.cutoff
+        return SVector(0.0, 0.0)
+    end
+
+    ti = atom_i.atom_type
+    tj = atom_j.atom_type
+
+    εij = ε[(ti, tj)]
+    σij = σ[(ti, tj)]
+
+    # Precompute inverse powers
+    inv_r = 1/r
+    sr = σij * inv_r
+    sr6 = sr^6
+    sr12 = sr6^2
+
+    # Lennard-Jones force magnitude
+    fmag = 24 * εij * inv_r * (2sr12 - sr6)
+
+    return fmag * disp / r
+end
+
+
+)
